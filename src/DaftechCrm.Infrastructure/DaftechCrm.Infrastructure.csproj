@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <!-- PostgreSQL provider for EF Core (Npgsql) - the database used in every environment. -->
+    <PackageReference Include="MimeKit" Version="4.17.0" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.0" />
@@ -24,7 +25,7 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <!-- MailKit - sends account-credential and notification emails via SMTP (SRS v2.0 4.3.1). -->
-    <PackageReference Include="MailKit" Version="4.13.0" />
+    <PackageReference Include="MailKit" Version="4.17.0" />
     <!-- Polly - retry with exponential backoff for transient SMTP failures. -->
     <PackageReference Include="Polly" Version="8.6.4" />
     <!-- Serilog - structured logging to console and rotating files. -->
@@ -34,6 +35,7 @@
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
     <!-- Health checks abstractions + ASP.NET endpoints. -->
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.0.0" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.22.0" />
   </ItemGroup>
 
 </Project>
