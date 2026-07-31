@@ -50,13 +50,17 @@ COPY --from=build --chown=daftech:daftech /app/publish .
 
 USER daftech
 
-ENV ASPNETCORE_URLS=http://+:8080 \
+# Local/compose default. Render (and most PaaS hosts) inject their own PORT
+# env var at container start and route traffic to it — the shell form
+# ENTRYPOINT below re-reads $PORT at runtime so both cases work without
+# rebuilding the image.
+ENV PORT=8080 \
     ASPNETCORE_ENVIRONMENT=Production \
     DOTNET_RUNNING_IN_CONTAINER=true
 
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health/live || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/health/live || exit 1
 
-ENTRYPOINT ["dotnet", "DaftechCrm.Api.dll"]
+ENTRYPOINT ["/bin/sh", "-c", "ASPNETCORE_URLS=http://+:${PORT} exec dotnet DaftechCrm.Api.dll"]

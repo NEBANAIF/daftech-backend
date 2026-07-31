@@ -9,6 +9,7 @@ using DaftechCrm.Infrastructure;
 using DaftechCrm.Infrastructure.Extensions;
 using DaftechCrm.Infrastructure.Logging;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
@@ -63,6 +64,24 @@ try
 
     builder.Services.AddCrmAuthorizationPolicies();
 
+    // ---- Reverse-proxy awareness (Render, or any PaaS that terminates TLS
+    // in front of the container) ----
+    // Render's edge terminates HTTPS and forwards plain HTTP to the container,
+    // setting X-Forwarded-Proto/X-Forwarded-For. Without this, every request
+    // looks like plain HTTP to Kestrel, so UseHttpsRedirection() below
+    // redirects it right back to https on the same host — the proxy strips
+    // TLS again on the way in, and the app loops forever. It also breaks the
+    // per-IP rate limiter, since every request would appear to come from
+    // Render's internal proxy IP. Render's proxy isn't in a known/fixed IP
+    // range from the app's point of view, so the known-networks/proxies
+    // allow-lists have to be cleared to trust the header unconditionally.
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.KnownNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
+
     // ---- Cross-cutting hardening / observability ----
     builder.Services.AddSecurityHardening();
     builder.Services.AddCrmRateLimiting();
@@ -91,6 +110,10 @@ try
         app.UseSwagger();
         app.UseSwaggerUI();
     }
+
+    // Must run before anything that inspects Request.Scheme/Request.Path or
+    // Connection.RemoteIpAddress (HTTPS redirection, HSTS, rate limiting, auth).
+    app.UseForwardedHeaders();
 
     app.UseSerilogRequestLogging();
     app.UseSecurityHardening();
