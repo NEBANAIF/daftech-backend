@@ -21,7 +21,7 @@ on:
 
 env:
   DOTNET_VERSION: "8.0.x"
-  API_SOLUTION: DaftechCrm.sln
+  API_SOLUTION: DaftechCrm.sln # solution sits at repo root, NOT under api/DaftechCrm
 
 jobs:
   backend:
