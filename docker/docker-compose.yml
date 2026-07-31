@@ -47,7 +47,7 @@ services:
       Smtp__Username: ${SMTP_USERNAME:-}
       Smtp__Password: ${SMTP_PASSWORD:-}
       Cors__AllowedOrigins__0: ${FRONTEND_ORIGIN:-http://localhost:4200}
-      Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required (generate with: openssl rand -base64 48)}
+      Jwt__SigningKey: "${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required (generate with: openssl rand -base64 48)}"
     ports:
       - "7001:8080"
     volumes:

@@ -6,6 +6,11 @@
 #   - a database backup taken immediately before migrations run
 #   - deployment through the reverse-proxy compose overlay (docker-compose.prod.yml)
 #
+# NOTE ON REPO LAYOUT: this repo (daftech-backend) has the .NET solution and
+# docker/scripts folders at its root. The Angular frontend lives in its own
+# repo (daftech-frontend) with its own deploy pipeline (Netlify) — this
+# workflow only builds and deploys the API.
+#
 # Required repository secrets:
 #   PROD_HOST, PROD_SSH_USER, PROD_SSH_KEY
 #   PROD_DB_HOST, PROD_DB_USER, PROD_DB_PASSWORD
@@ -21,7 +26,6 @@ on:
 env:
   DOTNET_VERSION: "8.0.x"
   IMAGE_API: ${{ vars.REGISTRY || 'ghcr.io' }}/${{ github.repository }}/api
-  IMAGE_FRONTEND: ${{ vars.REGISTRY || 'ghcr.io' }}/${{ github.repository }}/frontend
 
 concurrency:
   group: cd-production
@@ -57,26 +61,12 @@ jobs:
       - name: Build & push API image
         uses: docker/build-push-action@v5
         with:
-          context: api/DaftechCrm
-          file: api/DaftechCrm/docker/Dockerfile
+          context: .
+          file: docker/Dockerfile
           push: true
           tags: |
             ${{ env.IMAGE_API }}:${{ steps.meta.outputs.tag }}
             ${{ env.IMAGE_API }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build & push frontend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ng/daftech-crm
-          file: ng/daftech-crm/Dockerfile
-          build-args: |
-            BUILD_CONFIGURATION=production
-          push: true
-          tags: |
-            ${{ env.IMAGE_FRONTEND }}:${{ steps.meta.outputs.tag }}
-            ${{ env.IMAGE_FRONTEND }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -101,7 +91,7 @@ jobs:
             DB_USER=${{ secrets.PROD_DB_USER }} \
             DB_PASSWORD=${{ secrets.PROD_DB_PASSWORD }} \
             DB_NAME=daftech_crm \
-            api/DaftechCrm/scripts/backup-database.sh
+            scripts/backup-database.sh
 
   migrate-database:
     name: Apply EF Core migrations
@@ -127,8 +117,8 @@ jobs:
           DB_PASSWORD: ${{ secrets.PROD_DB_PASSWORD }}
           DB_NAME: daftech_crm
         run: |
-          chmod +x api/DaftechCrm/scripts/migration-run.sh
-          api/DaftechCrm/scripts/migration-run.sh
+          chmod +x scripts/migration-run.sh
+          scripts/migration-run.sh
 
   deploy:
     name: Deploy to production host

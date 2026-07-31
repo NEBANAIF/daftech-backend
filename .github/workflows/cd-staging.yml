@@ -1,8 +1,13 @@
 # DAFTECH CRM — Continuous Deployment (Staging)
 #
-# Triggers on every push to `develop`. Builds and pushes Docker images,
-# applies pending EF Core migrations, then redeploys the staging stack via
-# docker compose over SSH.
+# Triggers on every push to `develop`. Builds and pushes the API Docker
+# image, applies pending EF Core migrations, then redeploys the staging
+# stack via docker compose over SSH.
+#
+# NOTE ON REPO LAYOUT: this repo (daftech-backend) has the .NET solution and
+# docker/scripts folders at its root. The Angular frontend lives in its own
+# repo (daftech-frontend) with its own deploy pipeline (Netlify) — this
+# workflow only builds and deploys the API.
 #
 # Required repository secrets:
 #   STAGING_HOST, STAGING_SSH_USER, STAGING_SSH_KEY  — SSH access to the staging box
@@ -19,7 +24,6 @@ on:
 env:
   DOTNET_VERSION: "8.0.x"
   IMAGE_API: ${{ vars.REGISTRY || 'ghcr.io' }}/${{ github.repository }}/api
-  IMAGE_FRONTEND: ${{ vars.REGISTRY || 'ghcr.io' }}/${{ github.repository }}/frontend
 
 concurrency:
   group: cd-staging
@@ -55,26 +59,12 @@ jobs:
       - name: Build & push API image
         uses: docker/build-push-action@v5
         with:
-          context: api/DaftechCrm
-          file: api/DaftechCrm/docker/Dockerfile
+          context: .
+          file: docker/Dockerfile
           push: true
           tags: |
             ${{ env.IMAGE_API }}:${{ steps.meta.outputs.tag }}
             ${{ env.IMAGE_API }}:staging-latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Build & push frontend image
-        uses: docker/build-push-action@v5
-        with:
-          context: ng/daftech-crm
-          file: ng/daftech-crm/Dockerfile
-          build-args: |
-            BUILD_CONFIGURATION=staging
-          push: true
-          tags: |
-            ${{ env.IMAGE_FRONTEND }}:${{ steps.meta.outputs.tag }}
-            ${{ env.IMAGE_FRONTEND }}:staging-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -101,8 +91,8 @@ jobs:
           DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
           DB_NAME: daftech_crm_staging
         run: |
-          chmod +x api/DaftechCrm/scripts/migration-run.sh
-          api/DaftechCrm/scripts/migration-run.sh
+          chmod +x scripts/migration-run.sh
+          scripts/migration-run.sh
 
   deploy:
     name: Deploy to staging host
