@@ -1,12 +1,14 @@
-# DAFTECH CRM — Continuous Integration
+# DAFTECH CRM — Continuous Integration (backend)
 #
-# Runs on every push and pull request. Builds both the .NET backend and the
-# Angular frontend, runs whatever automated tests exist, and runs an OWASP
-# ZAP baseline scan against a locally-started instance of the API.
+# Runs on every push and pull request. Builds the .NET backend, runs
+# whatever automated tests exist, and runs an OWASP ZAP baseline scan
+# against a locally-started instance of the API.
 #
-# NOTE ON REPO LAYOUT: this workflow assumes the monorepo root contains
-# `api/DaftechCrm` (the .NET solution) and `ng/daftech-crm` (the Angular
-# app), matching the paths used elsewhere in this project.
+# NOTE ON REPO LAYOUT: this repo (daftech-backend) has the .NET solution at
+# its root (DaftechCrm.sln, docker/, scripts/, src/). The Angular frontend
+# now lives in its own separate repo with its own CI — nothing here builds
+# it. Actual deployment is handled by Render (API) and Netlify (frontend)
+# on every push, outside of GitHub Actions.
 
 name: CI
 
@@ -19,9 +21,7 @@ on:
 
 env:
   DOTNET_VERSION: "8.0.x"
-  NODE_VERSION: "20.x"
-  API_SOLUTION: api/DaftechCrm/DaftechCrm.sln
-  FRONTEND_DIR: ng/daftech-crm
+  API_SOLUTION: DaftechCrm.sln
 
 jobs:
   backend:
@@ -44,7 +44,7 @@ jobs:
 
       - name: Test
         run: |
-          if find api/DaftechCrm -iname "*Tests.csproj" -o -iname "*.Tests.csproj" | grep -q .; then
+          if find . -iname "*Tests.csproj" -o -iname "*.Tests.csproj" | grep -q .; then
             dotnet test "${{ env.API_SOLUTION }}" --configuration Release --no-build \
               --logger "trx;LogFileName=test-results.trx" \
               --collect:"XPlat Code Coverage"
@@ -61,51 +61,14 @@ jobs:
           if-no-files-found: ignore
 
       - name: Publish (build-only sanity check)
-        run: dotnet publish api/DaftechCrm/src/DaftechCrm.Api/DaftechCrm.Api.csproj -c Release -o /tmp/api-publish --no-restore
-
-  frontend:
-    name: Frontend build & test
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ env.FRONTEND_DIR }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: "npm"
-          cache-dependency-path: ${{ env.FRONTEND_DIR }}/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Lint
-        run: npm run lint --if-present
-
-      - name: Unit tests
-        run: |
-          if npm run | grep -qE "^\s*test\b"; then
-            npm test -- --watch=false --browsers=ChromeHeadless
-          else
-            echo "No 'test' script defined in package.json yet — skipping."
-          fi
-
-      - name: Build (staging configuration)
-        run: npx ng build --configuration staging
+        run: dotnet publish src/DaftechCrm.Api/DaftechCrm.Api.csproj -c Release -o /tmp/api-publish --no-restore
 
   # NOTE: this job also requires at least one EF Core migration to be
   # committed under src/DaftechCrm.Infrastructure/Migrations (see README
   # step 2 — `dotnet ef migrations add InitialCreate`). The repo ships with
   # that folder empty on purpose, so until a migration is committed,
   # `dotnet ef database update` below is a no-op, the app has no schema to
-  # query, and this job will still fail its health check. That's a
-  # pre-existing gap (this job had no database service at all before), not
-  # something introduced by the JWT changes — flagging it here so it isn't
-  # missed.
+  # query, and this job will still fail its health check.
   security-scan:
     name: OWASP ZAP baseline scan
     runs-on: ubuntu-latest
@@ -140,7 +103,7 @@ jobs:
         run: dotnet restore "${{ env.API_SOLUTION }}"
 
       - name: Apply migrations
-        working-directory: api/DaftechCrm/src/DaftechCrm.Api
+        working-directory: src/DaftechCrm.Api
         env:
           ConnectionStrings__Postgres: "Host=127.0.0.1;Port=5432;Database=daftech_crm;Username=daftech;Password=ci_password"
         run: dotnet ef database update --project ../DaftechCrm.Infrastructure --startup-project .
@@ -152,7 +115,7 @@ jobs:
           Jwt__SigningKey: "ci-only-signing-key-do-not-use-in-any-real-environment-32bytes+"
         run: |
           dotnet restore "${{ env.API_SOLUTION }}"
-          nohup dotnet run --project api/DaftechCrm/src/DaftechCrm.Api \
+          nohup dotnet run --project src/DaftechCrm.Api \
             --configuration Release --urls http://localhost:8080 \
             > api.log 2>&1 &
           echo $! > api.pid

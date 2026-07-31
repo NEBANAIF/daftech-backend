@@ -1,9 +1,8 @@
-# DAFTECH CRM — local development / staging composition.
+# DAFTECH CRM — local development / staging composition (backend only).
 #
-# Brings up Postgres, the API, and the Angular frontend (served by its own
-# nginx on :4200 → container :8080). No TLS termination here — for
-# production, use docker-compose.prod.yml instead, which adds the
-# reverse-proxy nginx with SSL.
+# Brings up Postgres and the API. The Angular frontend now lives in its own
+# repo with its own deploy (Netlify) — run it separately with `ng serve` or
+# its own docker-compose, pointed at this API's URL via environment.ts.
 #
 # Usage:
 #   cp .env.example .env   # fill in DB_PASSWORD etc.
@@ -63,27 +62,6 @@ services:
     networks:
       - daftech-net
 
-  frontend:
-    build:
-      context: ../../ng/daftech-crm
-      dockerfile: Dockerfile
-      args:
-        BUILD_CONFIGURATION: ${FRONTEND_BUILD_CONFIG:-staging}
-    container_name: daftech-crm-frontend
-    restart: unless-stopped
-    depends_on:
-      - api
-    ports:
-      - "4200:8080"
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    networks:
-      - daftech-net
-
 networks:
   daftech-net:
     driver: bridge
@@ -92,4 +70,3 @@ volumes:
   db-data:
   uploads-data:
   api-logs:
-  frontend-dist:
