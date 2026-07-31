@@ -219,18 +219,3 @@ public class LoginSessionConfiguration : IEntityTypeConfiguration<LoginSession>
         b.HasIndex(x => x.LastSeen);
     }
 }
-
-public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
-{
-    public void Configure(EntityTypeBuilder<RefreshToken> b)
-    {
-        b.ToTable("refresh_tokens");
-        b.HasKey(x => x.Id);
-        b.Property(x => x.TokenHash).HasMaxLength(88).IsRequired(); // base64 SHA-256 = 44 chars, headroom for future algo
-        b.Property(x => x.CreatedByIp).HasMaxLength(45).IsRequired();
-        b.Property(x => x.ReplacedByTokenHash).HasMaxLength(88);
-        // Lookups on refresh always key off the hash of the presented token.
-        b.HasIndex(x => x.TokenHash).IsUnique();
-        b.HasIndex(x => new { x.AccountType, x.AccountId });
-    }
-}

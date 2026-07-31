@@ -1,7 +1,4 @@
-using DaftechCrm.Api.Extensions;
 using DaftechCrm.Api.Middleware;
-using DaftechCrm.Api.Services;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
 using DaftechCrm.Application.DTOs;
 using DaftechCrm.Application.Interfaces;
@@ -9,21 +6,16 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace DaftechCrm.Api.Controllers;
 
-/// <summary>Staff account management — Admin only. Employees manage their own password via /api/auth/employee/change-password, not through here.</summary>
 [ApiController]
 [Route("api/employees")]
-[Authorize(Policy = AuthorizationPolicyNames.AdminOnly)]
 public class EmployeesController : ControllerBase
 {
     private readonly IEmployeeService _employees;
     public EmployeesController(IEmployeeService employees) => _employees = employees;
 
-    /// <summary>Staff directory — any authenticated employee (used to resolve assignee names, dashboards, etc.), not just Admin.</summary>
-    [Authorize(Policy = AuthorizationPolicyNames.AnyEmployee)]
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<EmployeeDto>>> GetAll(CancellationToken ct) => Ok(await _employees.GetAllAsync(ct));
 
-    [Authorize(Policy = AuthorizationPolicyNames.AnyEmployee)]
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<EmployeeDto>> GetById(Guid id, CancellationToken ct)
     {
@@ -102,6 +94,7 @@ public class AuthController : ControllerBase
     public AuthController(IAuthService auth) => _auth = auth;
 
     /// <summary>
+    /// <summary>
     /// Employee login. The server resolves the caller's IP address itself
     /// (see HttpCurrentRequestContext) — it is not supplied by the client —
     /// and records it on every attempt, successful or blocked. The response's
@@ -112,21 +105,12 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<EmployeeLoginResult>> LoginEmployee([FromBody] EmployeeLoginRequest request, CancellationToken ct) =>
         Ok(await _auth.LoginEmployeeAsync(request, ct));
 
-    /// <summary>
-    /// Employee changes their own password. Identity comes from the bearer
-    /// token (not a route parameter) — an authenticated employee can only
-    /// ever change their own password this way, never anyone else's.
-    /// </summary>
-    [Authorize(Policy = AuthorizationPolicyNames.AnyEmployee)]
-    [HttpPost("employee/change-password")]
-    public async Task<IActionResult> ChangeEmployeePassword([FromBody] ChangePasswordRequest request, CancellationToken ct)
+    [HttpPost("employee/{employeeId:guid}/change-password")]
+    public async Task<IActionResult> ChangeEmployeePassword(Guid employeeId, [FromBody] ChangePasswordRequest request, CancellationToken ct)
     {
-        var employeeId = this.GetAccountId();
-        if (employeeId is null) return Unauthorized();
-
         try
         {
-            await _auth.ChangeEmployeePasswordAsync(employeeId.Value, request, ct);
+            await _auth.ChangeEmployeePasswordAsync(employeeId, request, ct);
             return NoContent();
         }
         catch (InvalidOperationException ex)
@@ -139,48 +123,17 @@ public class AuthController : ControllerBase
     public async Task<ActionResult<ClientLoginResult>> LoginClient([FromBody] ClientLoginRequest request, CancellationToken ct) =>
         Ok(await _auth.LoginClientAsync(request, ct));
 
-    /// <summary>Client changes their own password. Identity comes from the bearer token, same reasoning as the employee endpoint above.</summary>
-    [Authorize(Policy = AuthorizationPolicyNames.ClientOnly)]
-    [HttpPost("client/change-password")]
-    public async Task<IActionResult> ChangeClientPassword([FromBody] ClientChangePasswordRequest request, CancellationToken ct)
+    [HttpPost("client/{clientId:guid}/change-password")]
+    public async Task<IActionResult> ChangeClientPassword(Guid clientId, [FromBody] ClientChangePasswordRequest request, CancellationToken ct)
     {
-        var clientId = this.GetAccountId();
-        if (clientId is null) return Unauthorized();
-
         try
         {
-            await _auth.ChangeClientPasswordAsync(clientId.Value, request, ct);
+            await _auth.ChangeClientPasswordAsync(clientId, request, ct);
             return NoContent();
         }
         catch (InvalidOperationException ex)
         {
             return BadRequest(ex.Message);
         }
-    }
-
-    /// <summary>
-    /// Exchanges a refresh token for a new access/refresh pair. Anonymous —
-    /// the refresh token itself, not a bearer access token, is the credential
-    /// here (the access token has usually already expired by the time this
-    /// is called, that's the point of the refresh flow).
-    /// </summary>
-    [HttpPost("refresh")]
-    public async Task<ActionResult<RefreshResult>> Refresh([FromBody] RefreshRequest request, CancellationToken ct)
-    {
-        var result = await _auth.RefreshAsync(request.RefreshToken, ct);
-        return result is null ? Unauthorized() : Ok(result);
-    }
-
-    /// <summary>Logs the current account out: revokes all its refresh tokens and closes its presence session.</summary>
-    [Authorize(Policy = AuthorizationPolicyNames.AnyAccount)]
-    [HttpPost("logout")]
-    public async Task<IActionResult> Logout(CancellationToken ct)
-    {
-        var accountId = this.GetAccountId();
-        var accountType = this.GetAccountType();
-        if (accountId is null || accountType is null) return Unauthorized();
-
-        await _auth.LogoutAsync(accountType.Value, accountId.Value, ct);
-        return NoContent();
     }
 }

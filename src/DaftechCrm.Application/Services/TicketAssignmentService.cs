@@ -21,9 +21,7 @@ public class TicketAssignmentService : ITicketAssignmentService
 
     public async Task<Employee?> SelectAssigneeAsync(CancellationToken ct = default)
     {
-        // Roles is stored via a value converter (kept as delimited text rather
-        // than a native Postgres array, to avoid coupling the entity model to
-        // one provider's type system), so
+        // Roles is stored via a value converter (MySQL has no array type), so
         // .Contains() on it can't translate to SQL — filter AccountStatus in
         // the query, then filter by role in memory after materializing.
         var activeEmployees = await _db.Employees

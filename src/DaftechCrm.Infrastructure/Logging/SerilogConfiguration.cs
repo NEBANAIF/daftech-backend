@@ -17,6 +17,11 @@ public static class SerilogConfiguration
     {
         var isProduction = string.Equals(environmentName, "Production", StringComparison.OrdinalIgnoreCase);
 
+        // Containers often have a read-only or ephemeral working directory; LOG_DIR
+        // lets the platform point file logging at a writable path (or disable it).
+        var logDirectory = Environment.GetEnvironmentVariable("LOG_DIR") ?? "logs";
+        var fileLoggingEnabled = !string.Equals(logDirectory, "off", StringComparison.OrdinalIgnoreCase);
+
         var loggerConfiguration = new LoggerConfiguration()
             .MinimumLevel.Is(isProduction ? LogEventLevel.Information : LogEventLevel.Debug)
             .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
@@ -26,15 +31,15 @@ public static class SerilogConfiguration
             .Enrich.With(new LogEnricher())
             .WriteTo.Console(outputTemplate:
                 "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}")
-            .WriteTo.File(
-                path: Path.Combine("logs", "daftech-crm-.log"),
+            .WriteTo.Conditional(_ => fileLoggingEnabled, sink => sink.File(
+                path: Path.Combine(logDirectory, "daftech-crm-.log"),
                 rollingInterval: RollingInterval.Day,
                 retainedFileCountLimit: 14,
                 fileSizeLimitBytes: 50 * 1024 * 1024,
                 rollOnFileSizeLimit: true,
                 shared: true,
                 outputTemplate:
-                    "{Timestamp:o} [{Level:u3}] ({Application}/{MachineName}/{ProcessId}/{ThreadId}) {Message:lj}{NewLine}{Exception}")
+                    "{Timestamp:o} [{Level:u3}] ({Application}/{MachineName}/{ProcessId}/{ThreadId}) {Message:lj}{NewLine}{Exception}"))
             .ReadFrom.Configuration(configuration);
 
         return loggerConfiguration.CreateLogger();

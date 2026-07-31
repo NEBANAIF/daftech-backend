@@ -1,10 +1,6 @@
-using DaftechCrm.Api.Extensions;
-using DaftechCrm.Api.Services;
 using DaftechCrm.Application.DTOs;
 using DaftechCrm.Application.Interfaces;
 using DaftechCrm.Application.Options;
-using DaftechCrm.Domain.Enums;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
@@ -12,12 +8,9 @@ namespace DaftechCrm.Api.Controllers;
 
 /// <summary>
 /// Agreement CRUD plus scanned-document upload/download (SRS §4.2 Document Storage).
-/// Staff (Admin/IT Support) manage agreements broadly; a client may only
-/// read/download their own via the *-for-client endpoints.
 /// </summary>
 [ApiController]
 [Route("api/agreements")]
-[Authorize(Policy = AuthorizationPolicyNames.AnyAccount)]
 public class AgreementsController : ControllerBase
 {
     private readonly IAgreementService _agreements;
@@ -37,40 +30,30 @@ public class AgreementsController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>All agreements — staff only.</summary>
-    [Authorize(Policy = AuthorizationPolicyNames.AnyEmployee)]
+    /// <summary>All agreements.</summary>
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<AgreementDto>>> GetAll(CancellationToken ct) =>
         Ok(await _agreements.GetAllAsync(ct));
 
-    /// <summary>A single agreement by id — staff can view any; a client only their own.</summary>
+    /// <summary>A single agreement by id.</summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<AgreementDto>> GetById(Guid id, CancellationToken ct)
     {
         var agreement = await _agreements.GetByIdAsync(id, ct);
-        if (agreement is null) return NotFound();
-        if (this.GetAccountType() == SessionAccountType.Client && agreement.ClientId != this.GetAccountId())
-            return Forbid();
-        return Ok(agreement);
+        return agreement is null ? NotFound() : Ok(agreement);
     }
 
-    /// <summary>Agreements belonging to one client. A client may only request their own id.</summary>
+    /// <summary>Agreements belonging to one client.</summary>
     [HttpGet("client/{clientId:guid}")]
-    public async Task<ActionResult<IReadOnlyList<AgreementDto>>> GetForClient(Guid clientId, CancellationToken ct)
-    {
-        if (this.GetAccountType() == SessionAccountType.Client && this.GetAccountId() != clientId)
-            return Forbid();
-        return Ok(await _agreements.GetForClientAsync(clientId, ct));
-    }
+    public async Task<ActionResult<IReadOnlyList<AgreementDto>>> GetForClient(Guid clientId, CancellationToken ct) =>
+        Ok(await _agreements.GetForClientAsync(clientId, ct));
 
-    /// <summary>Agreements expiring within the next 30 days (or already expired) — staff only.</summary>
-    [Authorize(Policy = AuthorizationPolicyNames.AnyEmployee)]
+    /// <summary>Agreements expiring within the next 30 days (or already expired).</summary>
     [HttpGet("expiring-soon")]
     public async Task<ActionResult<IReadOnlyList<AgreementDto>>> GetExpiringSoon(CancellationToken ct) =>
         Ok(await _agreements.GetExpiringSoonAsync(ct));
 
-    /// <summary>Creates an agreement — staff only. The scanned document is uploaded separately.</summary>
-    [Authorize(Policy = AuthorizationPolicyNames.AnyEmployee)]
+    /// <summary>Creates an agreement. The scanned document is uploaded separately.</summary>
     [HttpPost]
     public async Task<ActionResult<AgreementDto>> Create([FromBody] CreateAgreementRequest request, CancellationToken ct)
     {
@@ -79,11 +62,10 @@ public class AgreementsController : ControllerBase
     }
 
     /// <summary>
-    /// Uploads (or replaces) the scanned agreement document — staff only. Accepts .pdf, .doc, .docx,
+    /// Uploads (or replaces) the scanned agreement document. Accepts .pdf, .doc, .docx,
     /// .png, .jpg and .jpeg up to the configured size limit. Any previously stored file
     /// is deleted once the new one is committed.
     /// </summary>
-    [Authorize(Policy = AuthorizationPolicyNames.AnyEmployee)]
     [HttpPost("{id:guid}/document")]
     [RequestSizeLimit(11 * 1024 * 1024)]
     [ProducesResponseType(typeof(AgreementDocumentUploadResult), StatusCodes.Status200OK)]
@@ -127,7 +109,7 @@ public class AgreementsController : ControllerBase
         }
     }
 
-    /// <summary>Streams the scanned document back to the caller as a download. Staff can fetch any; a client only their own agreement's document.</summary>
+    /// <summary>Streams the scanned document back to the caller as a download.</summary>
     [HttpGet("{id:guid}/document")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -135,8 +117,6 @@ public class AgreementsController : ControllerBase
     {
         var agreement = await _agreements.GetByIdAsync(id, ct);
         if (agreement is null) return NotFound($"Agreement {id} was not found.");
-        if (this.GetAccountType() == SessionAccountType.Client && agreement.ClientId != this.GetAccountId())
-            return Forbid();
         if (string.IsNullOrWhiteSpace(agreement.ScannedFileUrl))
             return NotFound("This agreement has no scanned document attached.");
 
@@ -147,8 +127,7 @@ public class AgreementsController : ControllerBase
         return File(download.Content, download.ContentType, fileName);
     }
 
-    /// <summary>Removes the scanned document from an agreement and deletes it from storage — staff only.</summary>
-    [Authorize(Policy = AuthorizationPolicyNames.AnyEmployee)]
+    /// <summary>Removes the scanned document from an agreement and deletes it from storage.</summary>
     [HttpDelete("{id:guid}/document")]
     public async Task<IActionResult> DeleteDocument(Guid id, CancellationToken ct)
     {

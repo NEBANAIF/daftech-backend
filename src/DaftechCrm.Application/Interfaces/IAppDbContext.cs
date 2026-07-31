@@ -21,7 +21,6 @@ public interface IAppDbContext
     IQueryable<AppNotification> Notifications { get; }
     IQueryable<SatisfactionSurvey> SatisfactionSurveys { get; }
     IQueryable<LoginSession> LoginSessions { get; }
-    IQueryable<RefreshToken> RefreshTokens { get; }
 
     void Add<TEntity>(TEntity entity) where TEntity : class;
     void Update<TEntity>(TEntity entity) where TEntity : class;

@@ -2,7 +2,6 @@ using DaftechCrm.Application.Interfaces;
 using DaftechCrm.Application.Options;
 using DaftechCrm.Application.Services;
 using DaftechCrm.Infrastructure.Ai;
-using DaftechCrm.Infrastructure.Auth;
 using DaftechCrm.Infrastructure.Email;
 using DaftechCrm.Infrastructure.Persistence;
 using DaftechCrm.Infrastructure.Storage;
@@ -16,18 +15,19 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
-        var connectionString = configuration.GetConnectionString("Postgres")
-            ?? throw new InvalidOperationException("Missing 'ConnectionStrings:Postgres' in configuration.");
+        var connectionString = PostgresConnectionString.Resolve(configuration);
 
         services.AddDbContext<AppDbContext>(options =>
-            options.UseNpgsql(connectionString));
+            options.UseNpgsql(connectionString, npgsql =>
+            {
+                npgsql.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(10), errorCodesToAdd: null);
+                npgsql.MigrationsHistoryTable("__ef_migrations_history");
+            }));
 
         services.AddScoped<IAppDbContext>(sp => sp.GetRequiredService<AppDbContext>());
 
         services.Configure<TicketWorkflowOptions>(configuration.GetSection(TicketWorkflowOptions.SectionName));
         services.Configure<SessionOptions>(configuration.GetSection(SessionOptions.SectionName));
-        services.Configure<JwtOptions>(configuration.GetSection(JwtOptions.SectionName));
-        services.AddScoped<ITokenService, JwtTokenService>();
         services.Configure<SmtpOptions>(configuration.GetSection(SmtpOptions.SectionName));
         services.AddScoped<IEmailSender, MailKitEmailSender>();
 
@@ -60,7 +60,19 @@ public static class DependencyInjection
         using var scope = services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        await db.Database.MigrateAsync();
+        // Managed databases (e.g. Render) can still be booting when the API starts.
+        await WaitForDatabaseAsync(db);
+
+        // Use migrations when the assembly ships any; otherwise create the schema
+        // directly so a fresh deployment comes up with a usable database.
+        if (db.Database.GetMigrations().Any())
+        {
+            await db.Database.MigrateAsync();
+        }
+        else
+        {
+            await db.Database.EnsureCreatedAsync();
+        }
 
         if (!await db.EmployeesSet.AnyAsync())
         {
@@ -68,5 +80,16 @@ public static class DependencyInjection
             db.ClientsSet.AddRange(SeedData.Clients());
             await db.SaveChangesAsync();
         }
+    }
+
+    private static async Task WaitForDatabaseAsync(AppDbContext db, int attempts = 10)
+    {
+        for (var attempt = 1; attempt <= attempts; attempt++)
+        {
+            if (await db.Database.CanConnectAsync()) return;
+            await Task.Delay(TimeSpan.FromSeconds(Math.Min(attempt * 2, 10)));
+        }
+
+        throw new InvalidOperationException("The PostgreSQL database is not reachable. Check DATABASE_URL.");
     }
 }

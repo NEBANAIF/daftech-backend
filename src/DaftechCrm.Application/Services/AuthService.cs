@@ -11,14 +11,12 @@ public class AuthService : IAuthService
     private readonly IAppDbContext _db;
     private readonly ICurrentRequestContext _requestContext;
     private readonly ISessionService _sessions;
-    private readonly ITokenService _tokens;
 
-    public AuthService(IAppDbContext db, ICurrentRequestContext requestContext, ISessionService sessions, ITokenService tokens)
+    public AuthService(IAppDbContext db, ICurrentRequestContext requestContext, ISessionService sessions)
     {
         _db = db;
         _requestContext = requestContext;
         _sessions = sessions;
-        _tokens = tokens;
     }
 
     public async Task<EmployeeLoginResult> LoginEmployeeAsync(EmployeeLoginRequest request, CancellationToken ct = default)
@@ -50,12 +48,8 @@ public class AuthService : IAuthService
         await RecordLoginAsync(employee.Id, ip, request.DeviceType, request.DeviceIdentifier, allowed: true, reason: null, ct);
         await _sessions.OpenSessionAsync(SessionAccountType.Employee, employee.Id, ip, ct);
 
-        var roles = employee.Roles.Select(r => r.ToString()).ToList();
-        var pair = await _tokens.IssueTokenPairAsync(SessionAccountType.Employee, employee.Id, roles, ip, ct);
-
         var dto = await ToEmployeeDtoAsync(employee, ct);
-        return new EmployeeLoginResult(true, null, ip, dto, employee.MustChangePassword,
-            pair.AccessToken, pair.AccessTokenExpiresAt, pair.RefreshToken);
+        return new EmployeeLoginResult(true, null, ip, dto, employee.MustChangePassword);
     }
 
     public async Task ChangeEmployeePasswordAsync(Guid employeeId, ChangePasswordRequest request, CancellationToken ct = default)
@@ -75,10 +69,6 @@ public class AuthService : IAuthService
         employee.MustChangePassword = false;
         _db.Update(employee);
         await _db.SaveChangesAsync(ct);
-
-        // A password change invalidates every existing session/token for this
-        // account — including whatever token the caller used to get here.
-        await _tokens.RevokeAllForAccountAsync(SessionAccountType.Employee, employeeId, ct);
     }
 
     public async Task<ClientLoginResult> LoginClientAsync(ClientLoginRequest request, CancellationToken ct = default)
@@ -94,11 +84,8 @@ public class AuthService : IAuthService
         var ip = _requestContext.ResolveClientIpAddress();
         await _sessions.OpenSessionAsync(SessionAccountType.Client, client.Id, ip, ct);
 
-        var pair = await _tokens.IssueTokenPairAsync(SessionAccountType.Client, client.Id, Array.Empty<string>(), ip, ct);
-
         var dto = ToClientDto(client);
-        return new ClientLoginResult(true, null, dto, client.MustChangePassword,
-            pair.AccessToken, pair.AccessTokenExpiresAt, pair.RefreshToken);
+        return new ClientLoginResult(true, null, dto, client.MustChangePassword);
     }
 
     public async Task ChangeClientPasswordAsync(Guid clientId, ClientChangePasswordRequest request, CancellationToken ct = default)
@@ -118,21 +105,6 @@ public class AuthService : IAuthService
         client.MustChangePassword = false;
         _db.Update(client);
         await _db.SaveChangesAsync(ct);
-
-        await _tokens.RevokeAllForAccountAsync(SessionAccountType.Client, clientId, ct);
-    }
-
-    public async Task<RefreshResult?> RefreshAsync(string refreshToken, CancellationToken ct = default)
-    {
-        var ip = _requestContext.ResolveClientIpAddress();
-        var pair = await _tokens.RefreshAsync(refreshToken, ip, ct);
-        return pair is null ? null : new RefreshResult(pair.AccessToken, pair.AccessTokenExpiresAt, pair.RefreshToken);
-    }
-
-    public async Task LogoutAsync(SessionAccountType accountType, Guid accountId, CancellationToken ct = default)
-    {
-        await _tokens.RevokeAllForAccountAsync(accountType, accountId, ct);
-        await _sessions.CloseSessionAsync(accountType, accountId, ct);
     }
 
     private static void ValidatePasswordStrength(string password)

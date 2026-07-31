@@ -33,14 +33,7 @@ public record LoginRecordDto(Guid Id, DateTimeOffset Timestamp, string IpAddress
 /// <summary>Employee logs in with the system-issued username and their current password (one-time or self-chosen).</summary>
 public record EmployeeLoginRequest(string Username, string Password, DeviceType DeviceType, string DeviceIdentifier);
 
-/// <summary>
-/// AccessToken is a short-lived JWT sent as `Authorization: Bearer` on every
-/// subsequent request; RefreshToken is opaque, single-use (rotates on each
-/// refresh), and only ever sent to /auth/refresh. Both are null on failed logins.
-/// </summary>
-public record EmployeeLoginResult(
-    bool Success, string? Message, string IpAddress, EmployeeDto? Employee, bool MustChangePassword,
-    string? AccessToken = null, DateTimeOffset? AccessTokenExpiresAt = null, string? RefreshToken = null);
+public record EmployeeLoginResult(bool Success, string? Message, string IpAddress, EmployeeDto? Employee, bool MustChangePassword);
 
 /// <summary>Both fields are sent so the server can enforce match — never trust confirmation logic to the client alone.</summary>
 public record ChangePasswordRequest(string CurrentPassword, string NewPassword, string ConfirmNewPassword);

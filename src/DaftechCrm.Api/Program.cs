@@ -1,4 +1,3 @@
-using System.Text;
 using DaftechCrm.Api.BackgroundServices;
 using DaftechCrm.Api.Extensions;
 using DaftechCrm.Api.Middleware;
@@ -8,10 +7,9 @@ using DaftechCrm.Application.Options;
 using DaftechCrm.Infrastructure;
 using DaftechCrm.Infrastructure.Extensions;
 using DaftechCrm.Infrastructure.Logging;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
-using Microsoft.IdentityModel.Tokens;
 using Serilog;
 
 // Bootstrap logger: captures failures that happen before the host is built.
@@ -22,6 +20,21 @@ try
     var builder = WebApplication.CreateBuilder(args);
 
     const string AngularCorsPolicy = "AngularClient";
+
+    // ---- Hosting (Render/containers): bind to the port the platform injects ----
+    var port = Environment.GetEnvironmentVariable("PORT");
+    if (!string.IsNullOrWhiteSpace(port))
+    {
+        builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+    }
+
+    // Render terminates TLS at its proxy, so trust the forwarded scheme/host headers.
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
 
     // ---- Structured logging (Serilog: console + rotating files) ----
     Log.Logger = SerilogConfiguration.Create(builder.Configuration, builder.Environment.EnvironmentName);
@@ -36,52 +49,6 @@ try
 
     builder.Services.AddInfrastructure(builder.Configuration);
 
-    // ---- Authentication / authorization ----
-    var jwtOptions = builder.Configuration.GetSection(JwtOptions.SectionName).Get<JwtOptions>()
-        ?? throw new InvalidOperationException("Missing 'Jwt' configuration section.");
-    if (string.IsNullOrWhiteSpace(jwtOptions.SigningKey) || Encoding.UTF8.GetByteCount(jwtOptions.SigningKey) < 32)
-    {
-        throw new InvalidOperationException(
-            "Jwt:SigningKey must be set to a secret of at least 32 bytes (set via user-secrets/environment, not appsettings.json).");
-    }
-
-    builder.Services
-        .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-        .AddJwtBearer(options =>
-        {
-            options.TokenValidationParameters = new TokenValidationParameters
-            {
-                ValidateIssuer = true,
-                ValidIssuer = jwtOptions.Issuer,
-                ValidateAudience = true,
-                ValidAudience = jwtOptions.Audience,
-                ValidateLifetime = true,
-                ValidateIssuerSigningKey = true,
-                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.SigningKey)),
-                ClockSkew = TimeSpan.FromSeconds(30),
-            };
-        });
-
-    builder.Services.AddCrmAuthorizationPolicies();
-
-    // ---- Reverse-proxy awareness (Render, or any PaaS that terminates TLS
-    // in front of the container) ----
-    // Render's edge terminates HTTPS and forwards plain HTTP to the container,
-    // setting X-Forwarded-Proto/X-Forwarded-For. Without this, every request
-    // looks like plain HTTP to Kestrel, so UseHttpsRedirection() below
-    // redirects it right back to https on the same host — the proxy strips
-    // TLS again on the way in, and the app loops forever. It also breaks the
-    // per-IP rate limiter, since every request would appear to come from
-    // Render's internal proxy IP. Render's proxy isn't in a known/fixed IP
-    // range from the app's point of view, so the known-networks/proxies
-    // allow-lists have to be cleared to trust the header unconditionally.
-    builder.Services.Configure<ForwardedHeadersOptions>(options =>
-    {
-        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-        options.KnownNetworks.Clear();
-        options.KnownProxies.Clear();
-    });
-
     // ---- Cross-cutting hardening / observability ----
     builder.Services.AddSecurityHardening();
     builder.Services.AddCrmRateLimiting();
@@ -90,8 +57,14 @@ try
     builder.Services.AddHostedService<AutoCloseTicketsHostedService>();
     builder.Services.AddHostedService<SessionSweepHostedService>();
 
-    var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-        ?? ["http://localhost:4200"];
+    // CORS origins come from CORS_ALLOWED_ORIGINS (comma separated) when set, so a
+    // deployment can be re-pointed without a rebuild; otherwise from configuration.
+    var originsFromEnv = (Environment.GetEnvironmentVariable("CORS_ALLOWED_ORIGINS") ?? string.Empty)
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    var allowedOrigins = originsFromEnv.Length > 0
+        ? originsFromEnv
+        : builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? ["http://localhost:4200"];
 
     builder.Services.AddCors(options =>
     {
@@ -105,38 +78,48 @@ try
 
     var app = builder.Build();
 
-    if (app.Environment.IsDevelopment())
+    app.UseForwardedHeaders();
+
+    // Swagger stays available in hosted environments unless explicitly disabled,
+    // so a deployed API can be verified without a local build.
+    if (app.Environment.IsDevelopment() ||
+        app.Configuration.GetValue("Swagger:Enabled", true))
     {
         app.UseSwagger();
         app.UseSwaggerUI();
     }
-
-    // Must run before anything that inspects Request.Scheme/Request.Path or
-    // Connection.RemoteIpAddress (HTTPS redirection, HSTS, rate limiting, auth).
-    app.UseForwardedHeaders();
 
     app.UseSerilogRequestLogging();
     app.UseSecurityHardening();
     app.UseCors(AngularCorsPolicy);
     app.UseRateLimiter();
 
-    // Ensure the upload root exists — files are no longer served via UseStaticFiles
-    // (that ran unauthenticated ahead of the auth middleware, so anyone with a
-    // guessed/leaked path could read agreement documents with no login at all).
-    // Downloads now go exclusively through AgreementsController.DownloadDocument,
-    // which is [Authorize]'d and checked against the current account.
+    // Serve uploaded agreement documents from the configured storage root.
     var storageOptions = app.Services.GetRequiredService<IOptions<StorageOptions>>().Value;
-    Directory.CreateDirectory(Path.GetFullPath(storageOptions.RootPath));
+    var storageRoot = Path.GetFullPath(storageOptions.RootPath);
+    Directory.CreateDirectory(storageRoot);
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(storageRoot),
+        RequestPath = storageOptions.PublicBaseUrl.TrimEnd('/'),
+        ServeUnknownFileTypes = false,
+    });
 
-    // UseAuthentication must run before UseAuthorization or every [Authorize]
-    // check below sees an unauthenticated user regardless of the token sent.
-    app.UseAuthentication();
     app.UseAuthorization();
     app.MapControllers();
     app.MapCrmHealthChecks();
 
     // Apply pending EF Core migrations and seed baseline data on startup.
-    await app.Services.MigrateAndSeedAsync();
+    // A database hiccup must not stop the process: the health endpoints report it
+    // and the platform keeps the instance alive instead of crash-looping.
+    try
+    {
+        await app.Services.MigrateAndSeedAsync();
+    }
+    catch (Exception dbEx)
+    {
+        Log.Error(dbEx, "Database migration/seeding failed at startup; the API will continue to start");
+    }
 
     Log.Information("DAFTECH CRM API starting in {Environment}", app.Environment.EnvironmentName);
     app.Run();

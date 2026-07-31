@@ -20,7 +20,6 @@ public class AppDbContext : DbContext, IAppDbContext
     public DbSet<AppNotification> NotificationsSet => Set<AppNotification>();
     public DbSet<SatisfactionSurvey> SatisfactionSurveysSet => Set<SatisfactionSurvey>();
     public DbSet<LoginSession> LoginSessionsSet => Set<LoginSession>();
-    public DbSet<RefreshToken> RefreshTokensSet => Set<RefreshToken>();
 
     // IAppDbContext — exposed as IQueryable so Application services never depend on DbSet<T> directly.
     public IQueryable<Client> Clients => ClientsSet;
@@ -35,7 +34,6 @@ public class AppDbContext : DbContext, IAppDbContext
     public IQueryable<AppNotification> Notifications => NotificationsSet;
     public IQueryable<SatisfactionSurvey> SatisfactionSurveys => SatisfactionSurveysSet;
     public IQueryable<LoginSession> LoginSessions => LoginSessionsSet;
-    public IQueryable<RefreshToken> RefreshTokens => RefreshTokensSet;
 
     public void Add<TEntity>(TEntity entity) where TEntity : class => Set<TEntity>().Add(entity);
     public void Update<TEntity>(TEntity entity) where TEntity : class => Set<TEntity>().Update(entity);

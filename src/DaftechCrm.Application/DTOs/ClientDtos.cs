@@ -27,10 +27,7 @@ public record RejectClientRequest(string Reason);
 /// <summary>Client logs in with the system-issued username and their current password.</summary>
 public record ClientLoginRequest(string Username, string Password);
 
-/// <summary>AccessToken/RefreshToken: see EmployeeLoginResult remarks — same pattern, both null on failed logins.</summary>
-public record ClientLoginResult(
-    bool Success, string? Message, ClientDto? Client, bool MustChangePassword,
-    string? AccessToken = null, DateTimeOffset? AccessTokenExpiresAt = null, string? RefreshToken = null);
+public record ClientLoginResult(bool Success, string? Message, ClientDto? Client, bool MustChangePassword);
 
 public record ClientChangePasswordRequest(string CurrentPassword, string NewPassword, string ConfirmNewPassword);
 

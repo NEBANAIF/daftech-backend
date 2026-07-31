@@ -24,11 +24,18 @@ public static class SecurityHeadersExtensions
     /// <summary>Applies HTTPS redirection, HSTS (production) and security headers.</summary>
     public static IApplicationBuilder UseSecurityHardening(this WebApplication app)
     {
+        // Platforms like Render terminate TLS at their edge and forward plain HTTP
+        // internally (including health-check probes). Redirecting there produces 307
+        // loops and failed health checks, so it is opt-out via configuration/env.
+        var behindProxy = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("PORT"));
+        var enforceHttps = app.Configuration.GetValue("Security:EnforceHttpsRedirection", !behindProxy);
+
         if (!app.Environment.IsDevelopment())
         {
             app.UseHsts();
-            app.UseHttpsRedirection();
+            if (enforceHttps) app.UseHttpsRedirection();
         }
+
 
         app.Use(async (context, next) =>
         {

@@ -91,7 +91,7 @@ public class SessionService : ISessionService
     public async Task<IReadOnlyList<SessionActivityDto>> GetSessionActivityAsync(CancellationToken ct = default)
     {
         // GroupBy-then-First-per-group doesn't reliably translate to SQL
-        // across providers (Npgsql/Postgres included), so pull sessions and
+        // across providers (Pomelo/MySQL included), so pull sessions and
         // reduce to "most recent per account" in memory. Session volume
         // per account is small, so this stays cheap at this app's scale.
         var allSessions = await _db.LoginSessions.ToListAsync(ct);

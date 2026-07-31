@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 
 namespace DaftechCrm.Infrastructure.Health;
 
-/// <summary>Verifies the Postgres database is reachable and has no pending migrations.</summary>
+/// <summary>Verifies the PostgreSQL database is reachable and has no pending migrations.</summary>
 public class DatabaseHealthCheck : IHealthCheck
 {
     private readonly AppDbContext _db;
@@ -22,7 +22,7 @@ public class DatabaseHealthCheck : IHealthCheck
         try
         {
             if (!await _db.Database.CanConnectAsync(cancellationToken))
-                return HealthCheckResult.Unhealthy("Cannot connect to the Postgres database.");
+                return HealthCheckResult.Unhealthy("Cannot connect to the PostgreSQL database.");
 
             var pending = (await _db.Database.GetPendingMigrationsAsync(cancellationToken)).ToList();
             var data = new Dictionary<string, object> { ["pendingMigrations"] = pending.Count };

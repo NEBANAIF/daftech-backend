@@ -58,12 +58,6 @@ public interface IAuthService
 
     Task<ClientLoginResult> LoginClientAsync(ClientLoginRequest request, CancellationToken ct = default);
     Task ChangeClientPasswordAsync(Guid clientId, ClientChangePasswordRequest request, CancellationToken ct = default);
-
-    /// <summary>Rotates a refresh token for either account type; returns null if the presented token isn't valid/active.</summary>
-    Task<RefreshResult?> RefreshAsync(string refreshToken, CancellationToken ct = default);
-
-    /// <summary>Revokes all active refresh tokens for the account — called on explicit logout.</summary>
-    Task LogoutAsync(Domain.Enums.SessionAccountType accountType, Guid accountId, CancellationToken ct = default);
 }
 
 public interface IAgreementService

@@ -1,56 +1,36 @@
 # DAFTECH CRM — ASP.NET Core Backend
 
-Clean Architecture / DDD-style ASP.NET Core 8 Web API over PostgreSQL, matching
+Clean Architecture / DDD-style ASP.NET Core 8 Web API over MySQL, matching
 the layering used on the Trade License Workflow project:
 
 ```
 DaftechCrm.Domain          — entities, enums, no dependencies
 DaftechCrm.Application     — DTOs, service interfaces + implementations, business rules
-DaftechCrm.Infrastructure  — EF Core (Npgsql PostgreSQL provider), DI wiring
+DaftechCrm.Infrastructure  — EF Core (Pomelo MySQL provider), DI wiring
 DaftechCrm.Api             — controllers, Program.cs, appsettings
 ```
-
-> Originally built against MySQL (Pomelo); switched to PostgreSQL/Npgsql to
-> deploy on Neon. If you're running this locally with your own Postgres
-> instead of Neon, everything below still applies — just point
-> `ConnectionStrings:Postgres` at your own server.
 
 ## Prerequisites
 
 - .NET 8 SDK
-- A running PostgreSQL server (16.x), or a free [Neon](https://neon.tech) project
+- A running MySQL server (8.x)
 - `dotnet-ef` CLI tool: `dotnet tool install --global dotnet-ef`
 
-This was built/edited in a sandbox with no .NET SDK or network access, so
-it hasn't been compiled or migration-generated here — you'll need to do
-both locally. Authentication (JWT bearer tokens, refresh-token rotation,
-per-endpoint authorization, and ownership checks) was added on top of the
-original scaffold and reviewed manually line-by-line against the actual
-interfaces/entities, but not compiled. If `dotnet build` turns up an
-error, send it to me and I'll fix it directly. The initial migration
-(step 2 below) will now also create a `refresh_tokens` table alongside
-everything else — nothing extra to do, `dotnet ef migrations add` picks
-it up automatically.
+This was built in a sandbox with no .NET SDK or network access, so it
+hasn't been compiled or migration-generated here — you'll need to do both
+locally. I did a careful manual review pass (namespaces, DTO field order,
+LINQ translatability) instead of a real build; if something doesn't
+compile, send me the error and I'll fix it directly.
 
 ## Setup
 
-1. **Set your Postgres connection string.** Don't edit `appsettings.json`
+1. **Set your MySQL connection string.** Don't edit `appsettings.json`
    directly with your real password — use user-secrets instead:
    ```bash
    cd src/DaftechCrm.Api
    dotnet user-secrets init
-   dotnet user-secrets set "ConnectionStrings:Postgres" "Host=localhost;Port=5432;Database=daftech_crm;Username=postgres;Password=YOUR_PASSWORD"
+   dotnet user-secrets set "ConnectionStrings:MySql" "Server=localhost;Port=3306;Database=daftech_crm;User=root;Password=YOUR_PASSWORD;TreatTinyAsBoolean=true;"
    ```
-   For Neon specifically, copy the pooled connection string from the Neon
-   console (Dashboard → Connection Details) — it looks like:
-   ```
-   Host=ep-xxxx-pooler.region.aws.neon.tech;Port=5432;Database=daftech_crm;Username=youruser;Password=YOUR_PASSWORD;SSL Mode=Require;Trust Server Certificate=true
-   ```
-   Always use Neon's **pooled** connection string (the one with `-pooler` in
-   the host) for the running app, since EF Core opens/closes connections
-   per request/scope and Neon's own pooler handles that far better than
-   raw Postgres connections would under load. Use the **unpooled** string
-   only for the one-off `dotnet ef migrations add` step below.
 
    Do the same for your SMTP credentials (SRS v2.0 §4.3.1 — account credential emails via MailKit):
    ```bash
@@ -59,12 +39,6 @@ it up automatically.
    dotnet user-secrets set "Smtp:Username" "your-smtp-username"
    dotnet user-secrets set "Smtp:Password" "your-smtp-password"
    dotnet user-secrets set "Smtp:FromAddress" "no-reply@daftech.et"
-   ```
-
-   And a JWT signing key (used to sign the bearer tokens issued at login —
-   the app throws on startup if this is missing or under 32 bytes):
-   ```bash
-   dotnet user-secrets set "Jwt:SigningKey" "$(openssl rand -base64 48)"
    ```
 
 2. **Generate the initial migration** (no migrations are checked in yet —
