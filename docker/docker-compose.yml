@@ -1,0 +1,95 @@
+# DAFTECH CRM — local development / staging composition.
+#
+# Brings up Postgres, the API, and the Angular frontend (served by its own
+# nginx on :4200 → container :8080). No TLS termination here — for
+# production, use docker-compose.prod.yml instead, which adds the
+# reverse-proxy nginx with SSL.
+#
+# Usage:
+#   cp .env.example .env   # fill in DB_PASSWORD etc.
+#   docker compose -f docker/docker-compose.yml --env-file docker/.env up --build
+
+services:
+  db:
+    image: postgres:16
+    container_name: daftech-crm-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-daftech_crm}
+      POSTGRES_USER: ${DB_USER:-daftech}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-daftech} -d ${DB_NAME:-daftech_crm}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - daftech-net
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: daftech-crm-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Staging}
+      ConnectionStrings__Postgres: "Host=db;Port=5432;Database=${DB_NAME:-daftech_crm};Username=${DB_USER:-daftech};Password=${DB_PASSWORD}"
+      Smtp__Host: ${SMTP_HOST:-smtp.example.com}
+      Smtp__Port: ${SMTP_PORT:-587}
+      Smtp__Username: ${SMTP_USERNAME:-}
+      Smtp__Password: ${SMTP_PASSWORD:-}
+      Cors__AllowedOrigins__0: ${FRONTEND_ORIGIN:-http://localhost:4200}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required (generate with: openssl rand -base64 48)}
+    ports:
+      - "7001:8080"
+    volumes:
+      - uploads-data:/var/daftech/uploads
+      - api-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - daftech-net
+
+  frontend:
+    build:
+      context: ../../ng/daftech-crm
+      dockerfile: Dockerfile
+      args:
+        BUILD_CONFIGURATION: ${FRONTEND_BUILD_CONFIG:-staging}
+    container_name: daftech-crm-frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "4200:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - daftech-net
+
+networks:
+  daftech-net:
+    driver: bridge
+
+volumes:
+  db-data:
+  uploads-data:
+  api-logs:
+  frontend-dist:

@@ -1,0 +1,77 @@
+# DAFTECH CRM — production composition.
+#
+# Differs from docker-compose.yml:
+#   - No exposed DB port (internal network only)
+#   - A dedicated reverse-proxy nginx service terminates TLS and fronts
+#     both the frontend static files and the API (see docker/nginx.conf)
+#   - Frontend container itself is not published — nginx reaches it only
+#     for build output; runtime traffic goes through the proxy
+#   - Restart policy always, plus resource limits
+#
+# Usage:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
+#     --env-file docker/.env.production up -d --build
+
+services:
+  db:
+    restart: always
+    ports: []  # do not expose Postgres outside the compose network in production
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  api:
+    restart: always
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+    ports: []  # only reachable via the nginx reverse proxy
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  frontend:
+    build:
+      args:
+        BUILD_CONFIGURATION: production
+    restart: always
+    ports: []  # only reachable via the nginx reverse proxy
+    # In production, the reverse-proxy nginx serves the Angular static files
+    # directly (see docker/nginx.conf `root`) rather than proxying to this
+    # container's own nginx. This sidecar copies the build output into the
+    # shared `frontend-dist` volume on every start and then idles.
+    volumes:
+      - frontend-dist:/dist-export
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["cp -r /usr/share/nginx/html/. /dist-export/ && tail -f /dev/null"]
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: daftech-crm-nginx
+    restart: always
+    depends_on:
+      - api
+      - frontend
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${SSL_CERT_DIR:-./certs}:/etc/nginx/certs:ro
+      - frontend-dist:/usr/share/nginx/html:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - daftech-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  frontend-dist:

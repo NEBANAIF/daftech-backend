@@ -1,0 +1,140 @@
+# DAFTECH CRM — Continuous Deployment (Staging)
+#
+# Triggers on every push to `develop`. Builds and pushes Docker images,
+# applies pending EF Core migrations, then redeploys the staging stack via
+# docker compose over SSH.
+#
+# Required repository secrets:
+#   STAGING_HOST, STAGING_SSH_USER, STAGING_SSH_KEY  — SSH access to the staging box
+#   STAGING_DB_HOST, STAGING_DB_USER, STAGING_DB_PASSWORD
+#   REGISTRY, REGISTRY_USERNAME, REGISTRY_PASSWORD    — container registry (e.g. ghcr.io)
+
+name: CD - Staging
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: "8.0.x"
+  IMAGE_API: ${{ vars.REGISTRY || 'ghcr.io' }}/${{ github.repository }}/api
+  IMAGE_FRONTEND: ${{ vars.REGISTRY || 'ghcr.io' }}/${{ github.repository }}/frontend
+
+concurrency:
+  group: cd-staging
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    name: Build & push images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image tag
+        id: meta
+        run: echo "tag=staging-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.REGISTRY || 'ghcr.io' }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: api/DaftechCrm
+          file: api/DaftechCrm/docker/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_API }}:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE_API }}:staging-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ng/daftech-crm
+          file: ng/daftech-crm/Dockerfile
+          build-args: |
+            BUILD_CONFIGURATION=staging
+          push: true
+          tags: |
+            ${{ env.IMAGE_FRONTEND }}:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE_FRONTEND }}:staging-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  migrate-database:
+    name: Apply EF Core migrations
+    runs-on: ubuntu-latest
+    needs: [build-and-push]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Install dotnet-ef
+        run: dotnet tool install --global dotnet-ef
+
+      - name: Run migrations against staging database
+        env:
+          DB_HOST: ${{ secrets.STAGING_DB_HOST }}
+          DB_USER: ${{ secrets.STAGING_DB_USER }}
+          DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          DB_NAME: daftech_crm_staging
+        run: |
+          chmod +x api/DaftechCrm/scripts/migration-run.sh
+          api/DaftechCrm/scripts/migration-run.sh
+
+  deploy:
+    name: Deploy to staging host
+    runs-on: ubuntu-latest
+    needs: [build-and-push, migrate-database]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script: |
+            cd /opt/daftech-crm
+            export IMAGE_TAG=${{ needs.build-and-push.outputs.tag }}
+            docker compose -f docker/docker-compose.yml \
+              --env-file docker/.env.staging pull
+            docker compose -f docker/docker-compose.yml \
+              --env-file docker/.env.staging up -d --remove-orphans
+            docker image prune -f
+
+      - name: Verify staging health
+        run: |
+          for i in $(seq 1 15); do
+            if curl -fsS "https://${{ secrets.STAGING_HOST }}/health/ready" >/dev/null 2>&1; then
+              echo "Staging is healthy"
+              exit 0
+            fi
+            sleep 4
+          done
+          echo "Staging did not report healthy after deploy"
+          exit 1

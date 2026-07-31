@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DaftechCrm.Application\DaftechCrm.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Npgsql is the standard EF Core provider for PostgreSQL (used for Neon hosting). -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.10" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="8.0.8" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.8">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <!-- MailKit — sends account-credential and notification emails via SMTP (SRS v2.0 §4.3.1). -->
+    <PackageReference Include="MailKit" Version="4.7.1.1" />
+    <!-- Polly — retry with exponential backoff for transient SMTP failures. -->
+    <PackageReference Include="Polly" Version="8.4.1" />
+    <!-- Serilog — structured logging to console and rotating files. -->
+    <PackageReference Include="Serilog" Version="4.0.1" />
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.2" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <!-- Health checks abstractions + ASP.NET endpoints. -->
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="8.0.8" />
+    <!-- JWT access-token issuance for JwtTokenService (validation-side lives in the Api project via AddJwtBearer). -->
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.0.2" />
+  </ItemGroup>
+
+</Project>

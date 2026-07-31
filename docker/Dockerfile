@@ -1,0 +1,62 @@
+# syntax=docker/dockerfile:1
+#
+# DAFTECH CRM — Backend API (ASP.NET Core 8)
+# Multi-stage build: restore/build/publish in the SDK image, run on the
+# much smaller ASP.NET runtime image.
+#
+# Build context must be the repo's `api/DaftechCrm` directory, e.g.:
+#   docker build -f docker/Dockerfile -t daftech-crm-api:latest .
+# (docker-compose.yml in this folder sets the context correctly already.)
+
+# ---------------------------------------------------------------------------
+# Stage 1: build
+# ---------------------------------------------------------------------------
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+
+# Copy csproj files first so restore is cached unless dependencies change.
+COPY DaftechCrm.sln ./
+COPY src/DaftechCrm.Domain/DaftechCrm.Domain.csproj src/DaftechCrm.Domain/
+COPY src/DaftechCrm.Application/DaftechCrm.Application.csproj src/DaftechCrm.Application/
+COPY src/DaftechCrm.Infrastructure/DaftechCrm.Infrastructure.csproj src/DaftechCrm.Infrastructure/
+COPY src/DaftechCrm.Api/DaftechCrm.Api.csproj src/DaftechCrm.Api/
+
+RUN dotnet restore src/DaftechCrm.Api/DaftechCrm.Api.csproj
+
+# Now copy the rest of the source and publish.
+COPY src/ src/
+
+RUN dotnet publish src/DaftechCrm.Api/DaftechCrm.Api.csproj \
+    -c Release \
+    -o /app/publish \
+    --no-restore \
+    /p:UseAppHost=false
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime
+# ---------------------------------------------------------------------------
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+WORKDIR /app
+
+# Run as a non-root user.
+RUN addgroup --system --gid 1000 daftech \
+    && adduser --system --uid 1000 --ingroup daftech --shell /bin/false daftech
+
+# Uploaded files live here; keep it a separate, writable volume mount point.
+RUN mkdir -p /var/daftech/uploads /app/logs \
+    && chown -R daftech:daftech /var/daftech/uploads /app/logs /app
+
+COPY --from=build --chown=daftech:daftech /app/publish .
+
+USER daftech
+
+ENV ASPNETCORE_URLS=http://+:8080 \
+    ASPNETCORE_ENVIRONMENT=Production \
+    DOTNET_RUNNING_IN_CONTAINER=true
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health/live || exit 1
+
+ENTRYPOINT ["dotnet", "DaftechCrm.Api.dll"]
