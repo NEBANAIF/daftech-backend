@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# DAFTECH CRM — Backend API (ASP.NET Core 8)
+# DAFTECH CRM — Backend API (ASP.NET Core 10)
 # Multi-stage build: restore/build/publish in the SDK image, run on the
 # much smaller ASP.NET runtime image.
 #
@@ -11,8 +11,12 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
+
+# Pin the exact SDK feature band used elsewhere (see ../global.json) so local
+# and CI builds can't silently drift onto a newer/older .NET 10 SDK.
+COPY global.json ./
 
 # Copy csproj files first so restore is cached unless dependencies change.
 COPY DaftechCrm.sln ./
@@ -35,7 +39,7 @@ RUN dotnet publish src/DaftechCrm.Api/DaftechCrm.Api.csproj \
 # ---------------------------------------------------------------------------
 # Stage 2: runtime
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
 # Run as a non-root user.
