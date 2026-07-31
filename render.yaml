@@ -1,0 +1,48 @@
+# Render blueprint for the DAFTECH CRM API (this repo: daftech-backend).
+# Create/sync with: Render Dashboard -> New -> Blueprint -> pick this repo.
+#
+# IMPORTANT: if you already have a Render service for this repo (the one
+# with 8 deployments / "production" live), set `name` below to that exact
+# existing service name before running the blueprint. Render matches
+# services by name — a matching name adopts and manages the existing
+# service; a different name creates a brand new one alongside it.
+services:
+  - type: web
+    name: daftech-backend        # <- change to your existing service's name if it differs
+    runtime: docker
+    plan: starter
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health/live
+    autoDeploy: true
+    disk:
+      name: daftech-uploads
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: DATABASE_URL
+        # Paste the Neon "Connection string" (postgresql://user:pass@host/db?sslmode=require),
+        # not the ".NET" keyword-format tab. PostgresConnectionString.Resolve() accepts either
+        # postgres:// or postgresql:// and forces SSL Mode=Require for non-local hosts.
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        # Set to your Netlify frontend URL, e.g. https://daftech-crm.netlify.app
+        # (comma-separate if you add a custom domain later)
+        sync: false
+      - key: Storage__RootPath
+        value: /var/data/uploads
+      - key: LOG_DIR
+        value: /var/data/logs
+      - key: Smtp__Host
+        sync: false
+      - key: Smtp__Username
+        sync: false
+      - key: Smtp__Password
+        sync: false
+
+# Frontend (separate repo) deploys to Netlify — see its own netlify.toml.
+# Database is Neon Postgres, external to Render — see the Neon dashboard for
+# the connection string.
