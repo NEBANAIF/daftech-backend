@@ -1,20 +1,23 @@
 # DAFTECH CRM — Continuous Deployment (Production)
 #
-# Triggers on every push to `main`. Same pipeline as staging, plus:
-#   - a GitHub Environment approval gate (configure "production" environment
-#     with required reviewers in repo settings)
-#   - a database backup taken immediately before migrations run
-#   - deployment through the reverse-proxy compose overlay (docker-compose.prod.yml)
+# Render builds and deploys the API directly from this GitHub repo's
+# Dockerfile on every push to `main` — that part is NOT done here, it's
+# configured on Render's side (Settings -> Build & Deploy -> Auto-Deploy: Yes).
 #
-# NOTE ON REPO LAYOUT: this repo (daftech-backend) has the .NET solution and
-# docker/scripts folders at its root. The Angular frontend lives in its own
-# repo (daftech-frontend) with its own deploy pipeline (Netlify) — this
-# workflow only builds and deploys the API.
+# This workflow only handles the two things Render doesn't do for you:
+#   1. Take a backup of the Neon production database before schema changes land
+#   2. Apply pending EF Core migrations directly against Neon
+# ...then waits for Render's own (independent, parallel) deploy to report
+# healthy.
 #
 # Required repository secrets:
-#   PROD_HOST, PROD_SSH_USER, PROD_SSH_KEY
-#   PROD_DB_HOST, PROD_DB_USER, PROD_DB_PASSWORD
-#   REGISTRY, REGISTRY_USERNAME, REGISTRY_PASSWORD
+#   NEON_DATABASE_URL_PROD — Npgsql connection string for the production
+#     Neon database, e.g.:
+#     Host=<project>.neon.tech;Port=5432;Database=daftech_crm;
+#     Username=<user>;Password=<password>;Ssl Mode=Require;Trust Server Certificate=true
+#
+# No SSH host, no registry, no PROD_HOST secrets needed — Neon is reachable
+# over the public internet, and Render pulls straight from GitHub.
 
 name: CD - Production
 
@@ -25,79 +28,39 @@ on:
 
 env:
   DOTNET_VERSION: "8.0.x"
+  PROD_URL: "https://daftechb.onrender.com"
 
 concurrency:
   group: cd-production
   cancel-in-progress: false
 
 jobs:
-  build-and-push:
-    name: Build & push images
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      tag: ${{ steps.meta.outputs.tag }}
-      image: ${{ steps.meta.outputs.image }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Compute image tag and lowercase image name
-        id: meta
-        # Registry names must be all-lowercase, but github.repository preserves
-        # the org/user's actual casing (NEBANAIF) — so it has to be lowercased
-        # here in shell rather than used directly in an env: block.
-        run: |
-          echo "tag=prod-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
-          repo_lc=$(echo "${{ vars.REGISTRY || 'ghcr.io' }}/${{ github.repository }}/api" | tr '[:upper:]' '[:lower:]')
-          echo "image=$repo_lc" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ vars.REGISTRY || 'ghcr.io' }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build & push API image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: docker/Dockerfile
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
-            ${{ steps.meta.outputs.image }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
   backup-database:
     name: Backup production database
     runs-on: ubuntu-latest
-    needs: [build-and-push]
     environment: production
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run backup over SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Dump production database
+        env:
+          NEON_DATABASE_URL_PROD: ${{ secrets.NEON_DATABASE_URL_PROD }}
+        run: |
+          mkdir -p backups
+          # Neon backups are also covered by its own point-in-time restore,
+          # this is a belt-and-suspenders extra copy kept as a workflow artifact.
+          pg_dump "$NEON_DATABASE_URL_PROD" --format=custom --file="backups/daftech_crm_$(date +%Y%m%dT%H%M%S).dump"
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
         with:
-          host: ${{ secrets.PROD_HOST }}
-          username: ${{ secrets.PROD_SSH_USER }}
-          key: ${{ secrets.PROD_SSH_KEY }}
-          script: |
-            cd /opt/daftech-crm
-            DB_HOST=${{ secrets.PROD_DB_HOST }} \
-            DB_USER=${{ secrets.PROD_DB_USER }} \
-            DB_PASSWORD=${{ secrets.PROD_DB_PASSWORD }} \
-            DB_NAME=daftech_crm \
-            scripts/backup-database.sh
+          name: db-backup-${{ github.sha }}
+          path: backups/*.dump
+          retention-days: 30
 
   migrate-database:
     name: Apply EF Core migrations
@@ -116,61 +79,29 @@ jobs:
       - name: Install dotnet-ef
         run: dotnet tool install --global dotnet-ef
 
-      - name: Run migrations against production database
+      - name: Run migrations against Neon
         env:
-          DB_HOST: ${{ secrets.PROD_DB_HOST }}
-          DB_USER: ${{ secrets.PROD_DB_USER }}
-          DB_PASSWORD: ${{ secrets.PROD_DB_PASSWORD }}
-          DB_NAME: daftech_crm
+          ConnectionStrings__Postgres: ${{ secrets.NEON_DATABASE_URL_PROD }}
         run: |
-          chmod +x scripts/migration-run.sh
-          scripts/migration-run.sh
+          dotnet ef database update \
+            --project src/DaftechCrm.Infrastructure \
+            --startup-project src/DaftechCrm.Api
 
-  deploy:
-    name: Deploy to production host
+  verify-deployment:
+    name: Verify Render deployment health
     runs-on: ubuntu-latest
-    needs: [build-and-push, migrate-database]
-    environment: production
+    needs: [migrate-database]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_HOST }}
-          username: ${{ secrets.PROD_SSH_USER }}
-          key: ${{ secrets.PROD_SSH_KEY }}
-          script: |
-            cd /opt/daftech-crm
-            export IMAGE_TAG=${{ needs.build-and-push.outputs.tag }}
-            docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
-              --env-file docker/.env.production pull
-            docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
-              --env-file docker/.env.production up -d --remove-orphans
-            docker image prune -f
-
-      - name: Verify production health
+      - name: Wait for Render to build & deploy, then check health
         run: |
-          for i in $(seq 1 15); do
-            if curl -fsS "https://crm.daftech.et/health/ready" >/dev/null 2>&1; then
+          # Render's own build+deploy runs independently of this workflow and
+          # can take a few minutes, so this just polls until it's up.
+          for i in $(seq 1 40); do
+            if curl -fsS "${{ env.PROD_URL }}/health/ready" >/dev/null 2>&1; then
               echo "Production is healthy"
               exit 0
             fi
-            sleep 4
+            sleep 15
           done
-          echo "Production did not report healthy after deploy"
+          echo "Production did not report healthy within the expected window"
           exit 1
-
-      - name: Roll back on failed health check
-        if: failure()
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_HOST }}
-          username: ${{ secrets.PROD_SSH_USER }}
-          key: ${{ secrets.PROD_SSH_KEY }}
-          script: |
-            cd /opt/daftech-crm
-            echo "Health check failed — rolling back to previous 'latest' images"
-            docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml \
-              --env-file docker/.env.production up -d --remove-orphans
