@@ -25,7 +25,6 @@ on:
 
 env:
   DOTNET_VERSION: "8.0.x"
-  IMAGE_API: ${{ vars.REGISTRY || 'ghcr.io' }}/${{ github.repository }}/api
 
 concurrency:
   group: cd-production
@@ -40,13 +39,20 @@ jobs:
       packages: write
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
+      image: ${{ steps.meta.outputs.image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Compute image tag
+      - name: Compute image tag and lowercase image name
         id: meta
-        run: echo "tag=prod-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+        # Registry names must be all-lowercase, but github.repository preserves
+        # the org/user's actual casing (NEBANAIF) — so it has to be lowercased
+        # here in shell rather than used directly in an env: block.
+        run: |
+          echo "tag=prod-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          repo_lc=$(echo "${{ vars.REGISTRY || 'ghcr.io' }}/${{ github.repository }}/api" | tr '[:upper:]' '[:lower:]')
+          echo "image=$repo_lc" >> "$GITHUB_OUTPUT"
 
       - name: Log in to registry
         uses: docker/login-action@v3
@@ -65,8 +71,8 @@ jobs:
           file: docker/Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_API }}:${{ steps.meta.outputs.tag }}
-            ${{ env.IMAGE_API }}:latest
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
